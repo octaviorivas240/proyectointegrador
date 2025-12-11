@@ -1,4 +1,3 @@
-# main.py - VERSIÓN FINAL 100% FUNCIONAL - BOTONES PEQUEÑOS Y TODO FUNCIONA
 import cv2
 import numpy as np
 from scipy import signal
