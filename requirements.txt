@@ -1,0 +1,8 @@
+opencv-python
+numpy
+scipy
+matplotlib
+pyaudio
+pydub
+Pillow
+pyinstaller
