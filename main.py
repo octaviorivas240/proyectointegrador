@@ -1,3 +1,6 @@
+# Proyecto Integrador: Aplicación de Procesamiento de Señales Multimedia
+# Requiere: pip install opencv-python numpy scipy matplotlib pyaudio pydub tkinter
+
 import cv2
 import numpy as np
 from scipy import signal
@@ -13,314 +16,322 @@ import threading
 import os
 import time
 
-# KERNELS
+# Definir kernels para filtros
 kernels = {
+    'Roberts': np.array([[1, 0], [0, -1]]),
+    'Prewitt Horizontal': np.array([[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]]),
+    'Prewitt Vertical': np.array([[-1, -1, -1], [0, 0, 0], [1, 1, 1]]),
+    'Sobel Horizontal': np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]),
+    'Sobel Vertical': np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]]),
     'Sobel Ambos': (np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]), np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]])),
     'Laplace': np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]]),
+    'LoG': np.array([[0, 0, -1, 0, 0],
+                     [0, -1, -2, -1, 0],
+                     [-1, -2, 16, -2, -1],
+                     [0, -1, -2, -1, 0],
+                     [0, 0, -1, 0, 0]]) / 16
 }
 
-class SignalProcessor:
+class App:
     def __init__(self, root):
         self.root = root
         self.root.title("Procesador de Señales Multimedia")
-        self.root.geometry("1000x700")
+        self.root.geometry("800x600")
         self.root.configure(bg="#0d1117")
-        self.root.resizable(False, False)
 
         self.photo = None
-        self.audio = None
+        self.audio_data = None
         self.audio_rate = None
         self.audio_path = None
         self.video_frames = []
         self.video_path = None
 
-        # Header
-        header = tk.Frame(root, bg="#161b22", height=120)
-        header.pack(fill="x")
-        header.pack_propagate(False)
-        tk.Label(header, text="PROCESADOR DE SEÑALES", fg="#58a6ff", bg="#161b22", 
-                font=("Segoe UI", 24, "bold")).pack(pady=20)
-        tk.Label(header, text="Proyecto Integrador", fg="#8b949e", bg="#161b22").pack()
-
-        self.container = tk.Frame(root, bg="#0d1117")
-        self.container.pack(fill="both", expand=True, padx=100, pady=30)
         self.show_main_menu()
 
-    def clear(self):
-        for widget in self.container.winfo_children():
+    def show_main_menu(self):
+        self.clear_menu()
+        tk.Label(self.root, text="Seleccione el tipo de señal:", bg="#0d1117", fg="#ffffff", font=("Arial", 14)).pack(pady=20)
+        tk.Button(self.root, text="Fotografía", command=self.show_photo_menu, width=20).pack(pady=10)
+        tk.Button(self.root, text="Clip de Audio", command=self.show_audio_menu, width=20).pack(pady=10)
+        tk.Button(self.root, text="Clip de Video", command=self.show_video_menu, width=20).pack(pady=10)
+
+    def show_photo_menu(self):
+        self.clear_menu()
+        tk.Label(self.root, text="Menú de Fotografía", bg="#0d1117", fg="#ffffff", font=("Arial", 14)).pack(pady=20)
+        tk.Button(self.root, text="Capturar Fotografía", command=self.capture_photo, width=20).pack(pady=5)
+        tk.Button(self.root, text="Cargar Fotografía", command=self.load_photo, width=20).pack(pady=5)
+        tk.Button(self.root, text="Mostrar Original", command=lambda: self.show_image(self.photo, "Original"), width=20).pack(pady=5)
+        for name in kernels:
+            tk.Button(self.root, text=f"Convolución {name}", command=lambda n=name: self.apply_convolution(self.photo, n), width=20).pack(pady=5)
+        tk.Button(self.root, text="FFT e IFFT", command=self.apply_fft_ifft_photo, width=20).pack(pady=5)
+        tk.Button(self.root, text="Muestreo", command=self.apply_sampling_photo, width=20).pack(pady=5)
+        tk.Button(self.root, text="Volver", command=self.show_main_menu, width=20).pack(pady=5)
+
+    def show_audio_menu(self):
+        self.clear_menu()
+        tk.Label(self.root, text="Menú de Audio", bg="#0d1117", fg="#ffffff", font=("Arial", 14)).pack(pady=20)
+        tk.Button(self.root, text="Capturar Audio", command=self.capture_audio, width=20).pack(pady=5)
+        tk.Button(self.root, text="Cargar Audio", command=self.load_audio, width=20).pack(pady=5)
+        tk.Button(self.root, text="Mostrar Espectro Original", command=self.show_spectrum, width=20).pack(pady=5)
+        tk.Button(self.root, text="Convolución de Sonidos", command=self.convolve_audio, width=20).pack(pady=5)
+        tk.Button(self.root, text="FFT e IFFT", command=self.apply_fft_ifft_audio, width=20).pack(pady=5)
+        tk.Button(self.root, text="Muestreo", command=self.apply_sampling_audio, width=20).pack(pady=5)
+        tk.Button(self.root, text="Volver", command=self.show_main_menu, width=20).pack(pady=5)
+
+    def show_video_menu(self):
+        self.clear_menu()
+        tk.Label(self.root, text="Menú de Video", bg="#0d1117", fg="#ffffff", font=("Arial", 14)).pack(pady=20)
+        tk.Button(self.root, text="Capturar Video", command=self.capture_video, width=20).pack(pady=5)
+        tk.Button(self.root, text="Cargar Video", command=self.load_video, width=20).pack(pady=5)
+        tk.Button(self.root, text="Mostrar Frame Original", command=lambda: self.show_image(self.video_frames[0] if self.video_frames else None, "Frame Original"), width=20).pack(pady=5)
+        for name in kernels:
+            tk.Button(self.root, text=f"Convolución {name} a Frames", command=lambda n=name: self.apply_convolution_video(n), width=20).pack(pady=5)
+        tk.Button(self.root, text="FFT e IFFT a Frame", command=self.apply_fft_ifft_video, width=20).pack(pady=5)
+        tk.Button(self.root, text="Muestreo a Frames", command=self.apply_sampling_video, width=20).pack(pady=5)
+        tk.Button(self.root, text="Volver", command=self.show_main_menu, width=20).pack(pady=5)
+
+    def clear_menu(self):
+        for widget in self.root.winfo_children():
             widget.destroy()
 
-    def show_main_menu(self):
-        self.clear()
-        tk.Label(self.container, text="Selecciona el tipo de señal", 
-                fg="#58a6ff", bg="#0d1117", font=("Segoe UI", 22, "bold")).pack(pady=40)
-
-        buttons = [("Fotografía", "#ff7b72"), ("Clip de Audio", "#ffa657"), ("Clip de Video", "#79c0ff")]
-        for text, color in buttons:
-            btn = tk.Button(self.container, text=text, bg=color, fg="white",
-                           font=("Segoe UI", 15, "bold"), width=20, height=2,
-                           relief="flat", bd=0, cursor="hand2",
-                           command=lambda t=text: self.section_menu(t))
-            btn.pack(pady=18)
-            btn.bind("<Enter>", lambda e, b=btn: b.config(bg="white", fg=color))
-            btn.bind("<Leave>", lambda e, b=btn, c=color: b.config(bg=c, fg="white"))
-
-    def section_menu(self, title):
-        self.clear()
-        tk.Button(self.container, text="Volver", bg="#30363d", fg="#58a6ff",
-                 font=("Segoe UI", 10, "bold"), command=self.show_main_menu).pack(anchor="w", padx=20, pady=10)
-        tk.Label(self.container, text=title, fg="#58a6ff", bg="#0d1117",
-                font=("Segoe UI", 20, "bold")).pack(pady=25)
-
-        if "Foto" in title:
-            self.photo_menu()
-        elif "Audio" in title:
-            self.audio_menu()
-        else:
-            self.video_menu()
-
-    def create_btn(self, text, cmd, color="#238636"):
-        btn = tk.Button(self.container, text=text, bg=color, fg="white",
-                       font=("Segoe UI", 11, "bold"), width=38, height=1,
-                       relief="flat", bd=0, cursor="hand2", command=cmd,
-                       padx=20, pady=10)
-        btn.pack(pady=6)
-        btn.bind("<Enter>", lambda e, b=btn: b.config(bg="white", fg=color))
-        btn.bind("<Leave>", lambda e, b=btn, c=color: b.config(bg=c, fg="white"))
-
-    def photo_menu(self):
-        self.create_btn("Capturar Foto", self.capture_photo, "#238636")
-        self.create_btn("Cargar Imagen", self.upload_photo, "#8957e5")
-        self.create_btn("Mostrar Original", lambda: self.display_image(self.photo, "Original"), "#1f6feb")
-        self.create_btn("Filtro Sobel", lambda: self.apply_filter("Sobel Ambos"), "#f85149")
-        self.create_btn("Filtro Laplace", lambda: self.apply_filter("Laplace"), "#d29922")
-        self.create_btn("Downsampling", self.apply_sampling_image, "#39c5bb")
-
-    def audio_menu(self):
-        self.create_btn("Grabar Voz (5s)", self.capture_audio, "#238636")
-        self.create_btn("Cargar Audio", self.upload_audio, "#8957e5")
-        self.create_btn("Convolución + Reverb (Fig. 13-16)", self.convolve_audio, "#ff7b72")
-        self.create_btn("Muestreo Audio (Fig. 17)", self.apply_sampling_audio, "#f85149")
-
-    def video_menu(self):
-        self.create_btn("Grabar Video", self.capture_video, "#238636")
-        self.create_btn("Cargar Video", self.upload_video, "#8957e5")
-        self.create_btn("Reproducir Video", self.play_video, "#1f6feb")
-        self.create_btn("Filtro Laplace (Fig. 20)", self.apply_laplace_to_video, "#ff7b72")
-        self.create_btn("Muestreo Video (Fig. 21)", self.apply_sampling_video, "#f85149")
-
-    # =================== CAPTURA Y CARGA ===================
     def capture_photo(self):
         cap = cv2.VideoCapture(0)
         ret, frame = cap.read()
-        cap.release()
         if ret:
             self.photo = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            messagebox.showinfo("Éxito", "Foto capturada")
+            cap.release()
+            messagebox.showinfo("Éxito", "Fotografía capturada")
         else:
             messagebox.showerror("Error", "No se pudo capturar")
 
-    def upload_photo(self):
+    def load_photo(self):
         path = filedialog.askopenfilename(filetypes=[("Imagen", "*.jpg *.png *.jpeg *.bmp")])
         if path:
-            img = cv2.imread(path, 0)
-            if img is not None:
-                self.photo = img
-                messagebox.showinfo("Éxito", "Imagen cargada")
-            else:
-                messagebox.showerror("Error", "No se pudo cargar la imagen")
+            self.photo = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+            messagebox.showinfo("Éxito", "Fotografía cargada")
 
     def capture_audio(self):
         p = pyaudio.PyAudio()
         stream = p.open(format=pyaudio.paInt16, channels=1, rate=44100, input=True, frames_per_buffer=1024)
         frames = []
-        messagebox.showinfo("Grabando", "Habla ahora - 5 segundos")
-        for _ in range(215):
+        for _ in range(0, int(44100 / 1024 * 5)):
             data = stream.read(1024)
             frames.append(data)
         stream.stop_stream()
         stream.close()
         p.terminate()
 
-        self.audio_path = "voz_grabada.wav"
+        self.audio_path = "audio_capturado.wav"
         wf = wave.open(self.audio_path, 'wb')
         wf.setnchannels(1)
-        wf.setsampwidth(2)
+        wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
         wf.setframerate(44100)
         wf.writeframes(b''.join(frames))
         wf.close()
 
-        self.audio_rate, self.audio = wavfile.read(self.audio_path)
-        messagebox.showinfo("Éxito", "Audio grabado")
+        self.audio_rate, self.audio_data = wavfile.read(self.audio_path)
+        messagebox.showinfo("Éxito", "Audio capturado")
 
-    def upload_audio(self):
+    def load_audio(self):
         path = filedialog.askopenfilename(filetypes=[("Audio", "*.wav *.mp3")])
         if path:
             if path.endswith('.mp3'):
-                AudioSegment.from_mp3(path).export("temp.wav", format="wav")
-                path = "temp.wav"
+                audio = AudioSegment.from_mp3(path)
+                path = "audio_cargado.wav"
+                audio.export(path, format="wav")
             self.audio_path = path
-            self.audio_rate, self.audio = wavfile.read(path)
+            self.audio_rate, self.audio_data = wavfile.read(path)
             messagebox.showinfo("Éxito", "Audio cargado")
 
     def capture_video(self):
         cap = cv2.VideoCapture(0)
         fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        self.video_path = "video_grabado.avi"
+        self.video_path = 'video_capturado.avi'
         out = cv2.VideoWriter(self.video_path, fourcc, 20.0, (640, 480))
+
         self.video_frames = []
-        messagebox.showinfo("Grabando", "Grabando 5 segundos...")
-        for _ in range(100):
+        for _ in range(100):  # 5 segundos approx
             ret, frame = cap.read()
             if ret:
                 out.write(frame)
                 self.video_frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+            else:
+                break
+
         cap.release()
         out.release()
-        messagebox.showinfo("Éxito", "Video grabado")
+        if self.video_frames:
+            messagebox.showinfo("Éxito", "Video capturado")
+        else:
+            messagebox.showerror("Error", "No se pudo capturar")
 
-    def upload_video(self):
-        path = filedialog.askopenfilename(filetypes=[("Video", "*.mp4 *.avi *.mov")])
+    def load_video(self):
+        path = filedialog.askopenfilename(filetypes=[("Video", "*.avi *.mp4 *.mov")])
         if path:
             cap = cv2.VideoCapture(path)
             self.video_frames = []
-            while True:
+            while cap.isOpened():
                 ret, frame = cap.read()
-                if not ret: break
+                if not ret:
+                    break
                 self.video_frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
             cap.release()
             self.video_path = path
-            messagebox.showinfo("Éxito", f"Video cargado ({len(self.video_frames)} frames)")
+            if self.video_frames:
+                messagebox.showinfo("Éxito", "Video cargado")
+            else:
+                messagebox.showerror("Error", "No se pudo cargar")
 
-    # =================== VISUALIZACIÓN Y FIGURAS ===================
-    def display_image(self, img, title=""):
-        if img is None: 
-            messagebox.showerror("Error", "No hay imagen")
+    def show_image(self, img, title):
+        if img is None:
+            messagebox.showerror("Error", "No hay señal cargada")
             return
-        plt.figure(figsize=(10,8), facecolor='#0d1117')
         plt.imshow(img, cmap='gray')
-        plt.title(title, color='white', fontsize=16)
-        plt.axis('off')
+        plt.title(title)
         plt.show()
 
-    def apply_filter(self, name):
-        if self.photo is None: 
-            messagebox.showerror("Error", "Carga una imagen primero")
+    def apply_convolution(self, img, name):
+        if img is None:
+            messagebox.showerror("Error", "No hay imagen")
             return
-        k = kernels[name]
+        kernel = kernels[name]
         if name == 'Sobel Ambos':
-            gx = signal.convolve2d(self.photo, k[0], mode='same')
-            gy = signal.convolve2d(self.photo, k[1], mode='same')
-            filtered = np.sqrt(gx**2 + gy**2)
+            filtered_x = signal.convolve2d(img, kernel[0], mode='same')
+            filtered_y = signal.convolve2d(img, kernel[1], mode='same')
+            filtered = np.sqrt(filtered_x**2 + filtered_y**2)
         else:
-            filtered = signal.convolve2d(self.photo, k, mode='same')
-        self.display_image(np.abs(filtered), f"Filtro {name}")
+            filtered = signal.convolve2d(img, kernel, mode='same')
+        self.show_image(img, "Original")
+        self.show_image(np.abs(filtered), f"Filtrado con {name}")
 
-    def apply_sampling_image(self):
-        if self.photo is None: return
-        down = self.photo[::4, ::4]
-        plt.figure(figsize=(14,7), facecolor='#0d1117')
-        plt.subplot(121); plt.imshow(self.photo, cmap='gray'); plt.title("Original", color='white'); plt.axis('off')
-        plt.subplot(122); plt.imshow(down, cmap='gray'); plt.title("Downsampling x4", color='white'); plt.axis('off')
-        plt.suptitle("Muestreo en Imagen", color='#58a6ff', fontsize=16)
+    def apply_fft_ifft_photo(self):
+        if self.photo is None:
+            messagebox.showerror("Error", "No hay foto")
+            return
+        fft = np.fft.fft2(self.photo)
+        ifft = np.fft.ifft2(fft).real
+        self.show_image(self.photo, "Original")
+        plt.imshow(np.log(np.abs(np.fft.fftshift(fft)) + 1), cmap='gray')
+        plt.title("FFT")
+        plt.show()
+        self.show_image(ifft, "IFFT")
+
+    def apply_sampling_photo(self):
+        if self.photo is None:
+            messagebox.showerror("Error", "No hay foto")
+            return
+        downsampled = self.photo[::2, ::2]
+        self.show_image(self.photo, "Original")
+        self.show_image(downsampled, "Muestreada")
+
+    def show_spectrum(self):
+        if self.audio_data is None:
+            messagebox.showerror("Error", "No hay audio")
+            return
+        freqs = np.fft.fftfreq(len(self.audio_data), 1/self.audio_rate)
+        spectrum = np.abs(np.fft.fft(self.audio_data))
+        plt.plot(freqs[:len(freqs)//2], spectrum[:len(spectrum)//2])
+        plt.title("Espectro Original")
         plt.show()
 
     def convolve_audio(self):
-        if self.audio is None: 
-            messagebox.showerror("Error", "Primero graba o carga tu voz")
+        if self.audio_data is None:
+            messagebox.showerror("Error", "No hay audio")
             return
-        path = filedialog.askopenfilename(title="Selecciona impulso de reverb", filetypes=[("WAV","*.wav")])
-        if not path: return
-        rate2, audio2 = wavfile.read(path)
-        conv = signal.convolve(self.audio, audio2, mode='full')
-        conv = np.int16(conv / np.max(np.abs(conv)) * 32767)
-        wavfile.write("reverb.wav", 44100, conv)
+        path = filedialog.askopenfilename(title="Seleccione otro audio", filetypes=[("Audio", "*.wav *.mp3")])
+        if path:
+            if path.endswith('.mp3'):
+                audio = AudioSegment.from_mp3(path)
+                path = "audio2.wav"
+                audio.export(path, format="wav")
+            rate2, audio2 = wavfile.read(path)
+            if rate2 != self.audio_rate:
+                messagebox.showerror("Error", "Tasas de muestreo diferentes")
+                return
+            convolved = signal.convolve(self.audio_data, audio2)
+            convolved_path = "convolved.wav"
+            wavfile.write(convolved_path, self.audio_rate, convolved.astype(np.int16))
 
-        def plot(title, data, color, file):
-            plt.figure(figsize=(10,5), facecolor='#0d1117')
-            f = np.fft.fftfreq(len(data), 1/44100)
-            s = np.abs(np.fft.fft(data))
-            plt.plot(f[:len(f)//2], s[:len(s)//2], color=color)
-            plt.title(title, color='white')
-            plt.xlim(0,8000)
-            plt.gca().set_facecolor('#161b22')
-            plt.savefig(file, dpi=300, bbox_inches='tight', facecolor='#0d1117')
+            # Espectros
+            self.show_spectrum()  # Figura 13
+            freqs2 = np.fft.fftfreq(len(audio2), 1/rate2)
+            spectrum2 = np.abs(np.fft.fft(audio2))
+            plt.plot(freqs2[:len(freqs2)//2], spectrum2[:len(spectrum2)//2])
+            plt.title("Espectro Audio 2 (Figura 14)")
             plt.show()
 
-        plot("FIGURA 13 - Voz Original", self.audio, "#58a6ff", "fig13.png")
-        plot("FIGURA 14 - Impulso", audio2, "#ffa657", "fig14.png")
-        plot("FIGURA 15 - Reverb", conv, "#f85149", "fig15.png")
-        messagebox.showinfo("FIGURA 16", "Se reproducen los 3 audios")
-        threading.Thread(target=self.play_audio, args=(self.audio_path,)).start()
-        time.sleep(2)
-        threading.Thread(target=self.play_audio, args=(path,)).start()
-        time.sleep(2)
-        threading.Thread(target=self.play_audio, args=("reverb.wav",)).start()
+            freqs_conv = np.fft.fftfreq(len(convolved), 1/self.audio_rate)
+            spectrum_conv = np.abs(np.fft.fft(convolved))
+            plt.plot(freqs_conv[:len(freqs_conv)//2], spectrum_conv[:len(spectrum_conv)//2])
+            plt.title("Espectro Convolucionado (Figura 15)")
+            plt.show()
+
+            # Reproducción (Figura 16)
+            threading.Thread(target=self.play_audio, args=(self.audio_path,)).start()
+            time.sleep(1)
+            threading.Thread(target=self.play_audio, args=(path,)).start()
+            time.sleep(1)
+            threading.Thread(target=self.play_audio, args=(convolved_path,)).start()
+
+    def apply_fft_ifft_audio(self):
+        if self.audio_data is None:
+            messagebox.showerror("Error", "No hay audio")
+            return
+        fft = np.fft.fft(self.audio_data)
+        ifft = np.fft.ifft(fft).real
+        ifft_path = "ifft_audio.wav"
+        wavfile.write(ifft_path, self.audio_rate, ifft.astype(np.int16))
+        self.play_audio(ifft_path)
 
     def apply_sampling_audio(self):
-        if self.audio is None: return
-        down = self.audio[::2]
-        wavfile.write("grave.wav", 22050, down.astype(np.int16))
-        plt.figure(figsize=(14,7), facecolor='#0d1117')
-        plt.subplot(121); self.plot_spec(self.audio,44100,"Original","#58a6ff")
-        plt.subplot(122); self.plot_spec(down,22050,"Downsampling","#ff7b72")
-        plt.suptitle("FIGURA 17", color='white', fontsize=16)
-        plt.savefig("fig17.png", dpi=300)
-        plt.show()
-        self.play_audio(self.audio_path)
-        time.sleep(1)
-        self.play_audio("grave.wav")
-
-    def plot_spec(self, data, rate, title, color):
-        f = np.fft.fftfreq(len(data), 1/rate)
-        s = np.abs(np.fft.fft(data))
-        plt.plot(f[:len(f)//2], s[:len(s)//2], color, linewidth=2)
-        plt.title(title, color='white')
-        plt.xlim(0,8000)
-        plt.gca().set_facecolor('#161b22')
-
-    def apply_laplace_to_video(self):
-        if not self.video_frames: 
-            messagebox.showerror("Error", "Carga un video")
+        if self.audio_data is None:
+            messagebox.showerror("Error", "No hay audio")
             return
-        frame = self.video_frames[0]
-        filtered = signal.convolve2d(frame, kernels['Laplace'], mode='same')
-        plt.figure(figsize=(14,7), facecolor='#0d1117')
-        plt.subplot(121); plt.imshow(frame, cmap='gray'); plt.title("Original", color='white'); plt.axis('off')
-        plt.subplot(122); plt.imshow(np.abs(filtered), cmap='gray'); plt.title("FIGURA 20 - Laplace", color='white'); plt.axis('off')
-        plt.savefig("fig20.png", dpi=300)
+        downsampled = self.audio_data[::2]
+        downsampled_path = "downsampled_audio.wav"
+        wavfile.write(downsampled_path, self.audio_rate // 2, downsampled.astype(np.int16))
+        # Figura 17
+        plt.figure(figsize=(12, 6))
+        freqs = np.fft.fftfreq(len(self.audio_data), 1/self.audio_rate)
+        spectrum = np.abs(np.fft.fft(self.audio_data))
+        plt.subplot(1, 2, 1)
+        plt.plot(freqs[:len(freqs)//2], spectrum[:len(spectrum)//2])
+        plt.title("Audio Original")
+
+        freqs_down = np.fft.fftfreq(len(downsampled), 1/(self.audio_rate // 2))
+        spectrum_down = np.abs(np.fft.fft(downsampled))
+        plt.subplot(1, 2, 2)
+        plt.plot(freqs_down[:len(freqs_down)//2], spectrum_down[:len(spectrum_down)//2])
+        plt.title("Audio Muestreado (más grave)")
         plt.show()
+        self.play_audio(downsampled_path)
 
-    def apply_sampling_video(self):
-        if not self.video_frames: 
-            messagebox.showerror("Error", "Carga un video")
-            return
-        frame = self.video_frames[0]
-        down = frame[::4, ::4]
-        plt.figure(figsize=(14,7), facecolor='#0d1117')
-        plt.subplot(121); plt.imshow(frame, cmap='gray'); plt.title("Original", color='white'); plt.axis('off')
-        plt.subplot(122); plt.imshow(down, cmap='gray'); plt.title("FIGURA 21 - Muestreado", color='white'); plt.axis('off')
-        plt.savefig("fig21.png", dpi=300)
-        plt.show()
-
-    def play_audio(self, path):
-        if path and os.path.exists(path):
-            play(AudioSegment.from_file(path))
-
-    def play_video(self):
-        if not self.video_path:
+    def apply_convolution_video(self, name):
+        if not self.video_frames:
             messagebox.showerror("Error", "No hay video")
             return
-        cap = cv2.VideoCapture(self.video_path)
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret: break
-            cv2.imshow('Video', frame)
-            if cv2.waitKey(25) & 0xFF == ord('q'): break
-        cap.release()
-        cv2.destroyAllWindows()
+        filtered_frames = []
+        for frame in self.video_frames:
+            self.apply_convolution(frame, name)  # Muestra originales y filtradas
+        messagebox.showinfo("Info", "Convolución aplicada a frames")
+
+    def apply_fft_ifft_video(self):
+        if not self.video_frames:
+            messagebox.showerror("Error", "No hay video")
+            return
+        self.apply_fft_ifft_photo()  # Aplica a primer frame
+
+    def apply_sampling_video(self):
+        if not self.video_frames:
+            messagebox.showerror("Error", "No hay video")
+            return
+        self.apply_sampling_photo()  # Aplica a primer frame
+
+    def play_audio(self, path):
+        sound = AudioSegment.from_file(path)
+        play(sound)
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = SignalProcessor(root)
+    app = App(root)
     root.mainloop()
